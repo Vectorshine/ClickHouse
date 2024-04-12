@@ -180,7 +180,7 @@ protected:
         /// source should return at least one row to start pipeline
         result.addColumn(ColumnUInt8::create(1, 1));
         /// actual data stored in chunk info
-        result.setChunkInfo(std::move(current_check_task));
+        result.addChunkInfo(std::move(current_check_task));
         return result;
     }
 
@@ -280,7 +280,7 @@ public:
 protected:
     void transform(Chunk & chunk) override
     {
-        auto table_check_task = std::dynamic_pointer_cast<const TableCheckTask>(chunk.getChunkInfo());
+        auto table_check_task = chunk.getChunkInfo<TableCheckTask>();
         auto check_result = table_check_task->checkNext();
         if (!check_result)
         {

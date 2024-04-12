@@ -19,10 +19,10 @@ Chunk::Chunk(DB::Columns columns_, UInt64 num_rows_) : columns(std::move(columns
     checkNumRowsIsConsistent();
 }
 
-Chunk::Chunk(Columns columns_, UInt64 num_rows_, ChunkInfoPtr chunk_info_)
+Chunk::Chunk(Columns columns_, UInt64 num_rows_, std::deque<ChunkInfoPtr> chunk_infos_)
     : columns(std::move(columns_))
     , num_rows(num_rows_)
-    , chunk_info(std::move(chunk_info_))
+    , chunk_infos(std::move(chunk_infos_))
 {
     checkNumRowsIsConsistent();
 }
@@ -43,17 +43,17 @@ Chunk::Chunk(MutableColumns columns_, UInt64 num_rows_)
     checkNumRowsIsConsistent();
 }
 
-Chunk::Chunk(MutableColumns columns_, UInt64 num_rows_, ChunkInfoPtr chunk_info_)
+Chunk::Chunk(MutableColumns columns_, UInt64 num_rows_, std::deque<ChunkInfoPtr> chunk_infos_)
     : columns(unmuteColumns(std::move(columns_)))
     , num_rows(num_rows_)
-    , chunk_info(std::move(chunk_info_))
+    , chunk_infos(std::move(chunk_infos_))
 {
     checkNumRowsIsConsistent();
 }
 
 Chunk Chunk::clone() const
 {
-    return Chunk(getColumns(), getNumRows(), chunk_info);
+    return Chunk(getColumns(), getNumRows(), chunk_infos);
 }
 
 void Chunk::setColumns(Columns columns_, UInt64 num_rows_)

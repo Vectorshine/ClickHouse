@@ -2,6 +2,7 @@
 
 #include <Columns/IColumn.h>
 #include <unordered_map>
+#include <deque>
 
 namespace DB
 {
@@ -37,21 +38,21 @@ public:
     Chunk(Chunk && other) noexcept
         : columns(std::move(other.columns))
         , num_rows(other.num_rows)
-        , chunk_info(std::move(other.chunk_info))
+        , chunk_infos(std::move(other.chunk_infos))
     {
         other.num_rows = 0;
     }
 
     Chunk(Columns columns_, UInt64 num_rows_);
-    Chunk(Columns columns_, UInt64 num_rows_, ChunkInfoPtr chunk_info_);
+    Chunk(Columns columns_, UInt64 num_rows_, std::deque<ChunkInfoPtr> chunk_infos_);
     Chunk(MutableColumns columns_, UInt64 num_rows_);
-    Chunk(MutableColumns columns_, UInt64 num_rows_, ChunkInfoPtr chunk_info_);
+    Chunk(MutableColumns columns_, UInt64 num_rows_, std::deque<ChunkInfoPtr> chunk_infos_);
 
     Chunk & operator=(const Chunk & other) = delete;
     Chunk & operator=(Chunk && other) noexcept
     {
         columns = std::move(other.columns);
-        chunk_info = std::move(other.chunk_info);
+        chunk_infos = std::move(other.chunk_infos);
         num_rows = other.num_rows;
         other.num_rows = 0;
         return *this;
@@ -62,7 +63,7 @@ public:
     void swap(Chunk & other) noexcept
     {
         columns.swap(other.columns);
-        chunk_info.swap(other.chunk_info);
+        chunk_infos.swap(other.chunk_infos);
         std::swap(num_rows, other.num_rows);
     }
 
@@ -70,7 +71,7 @@ public:
     {
         num_rows = 0;
         columns.clear();
-        chunk_info.reset();
+        chunk_infos.clear();
     }
 
     const Columns & getColumns() const { return columns; }
@@ -81,9 +82,46 @@ public:
     /** Get empty columns with the same types as in block. */
     MutableColumns cloneEmptyColumns() const;
 
-    const ChunkInfoPtr & getChunkInfo() const { return chunk_info; }
-    bool hasChunkInfo() const { return chunk_info != nullptr; }
-    void setChunkInfo(ChunkInfoPtr chunk_info_) { chunk_info = std::move(chunk_info_); }
+    const std::deque<ChunkInfoPtr> & getChunkInfos() const { return chunk_infos; }
+    void setChunkInfos(std::deque<ChunkInfoPtr> chunk_infos_) { chunk_infos = std::move(chunk_infos_); }
+    size_t hasAnyChunkInfo() const { return !chunk_infos.empty(); }
+
+    template <class T>
+    std::shared_ptr<const T> getChunkInfo() const
+    {
+        static_assert(std::is_base_of_v<ChunkInfo, T>, "Template parameter must inherit ChunkInfo");
+        for (const auto & it : chunk_infos)
+        {
+            auto cast = std::dynamic_pointer_cast<const T>(it);
+            if (cast)
+                return cast;
+        }
+        return nullptr;
+    }
+
+    template <class T>
+    std::shared_ptr<T> extractChunkInfo()
+    {
+        static_assert(std::is_base_of_v<ChunkInfo, T>, "Template parameter must inherit ChunkInfo");
+        for (auto it = chunk_infos.begin(); it != chunk_infos.end(); ++it)
+        {
+            auto cast = std::dynamic_pointer_cast<const T>(*it);
+            if (cast)
+            {
+                it = chunk_infos.erase(it);
+                return std::const_pointer_cast<T>(cast);
+            }
+        }
+        return nullptr;
+    }
+
+    template <class T>
+    void addChunkInfo(std::shared_ptr<T> info)
+    {
+        static_assert(std::is_base_of_v<ChunkInfo, T>, "Template parameter must inherit ChunkInfo");
+        chassert(!getChunkInfo<T>());
+        chunk_infos.emplace_back(std::move(info));
+    }
 
     UInt64 getNumRows() const { return num_rows; }
     UInt64 getNumColumns() const { return columns.size(); }
@@ -107,7 +145,7 @@ public:
 private:
     Columns columns;
     UInt64 num_rows = 0;
-    ChunkInfoPtr chunk_info;
+    std::deque<ChunkInfoPtr> chunk_infos;
 
     void checkNumRowsIsConsistent();
 };

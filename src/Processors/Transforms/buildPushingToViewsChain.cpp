@@ -23,9 +23,12 @@
 #include <Common/ThreadStatus.h>
 #include <Common/checkStackSize.h>
 #include <Common/logger_useful.h>
+#include "Processors/Chunk.h"
+#include "Processors/Transforms/NumberBlocksTransform.h"
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 
 
 namespace ProfileEvents
@@ -120,6 +123,7 @@ private:
     {
         QueryPipeline pipeline;
         PullingPipelineExecutor executor;
+        std::deque<ChunkInfoPtr> chunk_infos;
 
         explicit State(QueryPipeline pipeline_)
             : pipeline(std::move(pipeline_))
@@ -364,19 +368,21 @@ std::optional<Chain> generateViewChain(
                 insert_columns.emplace_back(column.name);
         }
 
-        InterpreterInsertQuery interpreter(nullptr, insert_context, false, false, false);
+        InterpreterInsertQuery interpreter(nullptr, insert_context, false, false, false, false);
         out = interpreter.buildChain(inner_table, inner_metadata_snapshot, insert_columns, thread_status_holder, view_counter_ms, !materialized_view->hasInnerTable());
 
-        if (interpreter.shouldAddSquashingFroStorage(inner_table))
-        {
-            bool table_prefers_large_blocks = inner_table->prefersLargeBlocks();
-            const auto & settings = insert_context->getSettingsRef();
+        out.addSource(std::make_shared<CheckInsertDeduplicationTokenTransform>("Before inner chain", !insert_settings.insert_deduplication_token.value.empty(), out.getInputHeader()));
 
-            out.addSource(std::make_shared<SquashingChunksTransform>(
-                out.getInputHeader(),
-                table_prefers_large_blocks ? settings.min_insert_block_size_rows : settings.max_block_size,
-                table_prefers_large_blocks ? settings.min_insert_block_size_bytes : 0ULL));
-        }
+        // if (interpreter.shouldAddSquashingFroStorage(inner_table))
+        // {
+        //     bool table_prefers_large_blocks = inner_table->prefersLargeBlocks();
+        //     const auto & settings = insert_context->getSettingsRef();
+
+        //     out.addSource(std::make_shared<SquashingChunksTransform>(
+        //         out.getInputHeader(),
+        //         table_prefers_large_blocks ? settings.min_insert_block_size_rows : settings.max_block_size,
+        //         table_prefers_large_blocks ? settings.min_insert_block_size_bytes : 0ULL));
+        // }
 
         auto counting = std::make_shared<CountingTransform>(out.getInputHeader(), current_thread, insert_context->getQuota());
         counting->setProcessListElement(insert_context->getProcessListElement());
@@ -419,11 +425,15 @@ std::optional<Chain> generateViewChain(
 
     if (type == QueryViewsLogElement::ViewType::MATERIALIZED)
     {
+        out.addSource(std::make_shared<CheckInsertDeduplicationTokenTransform>("Right after Inner query", !insert_settings.insert_deduplication_token.value.empty(), out.getInputHeader()));
+
         auto executing_inner_query = std::make_shared<ExecutingInnerQueryFromViewTransform>(
             storage_header, views_data->views.back(), views_data);
         executing_inner_query->setRuntimeData(view_thread_status, view_counter_ms);
 
         out.addSource(std::move(executing_inner_query));
+
+        out.addSource(std::make_shared<CheckInsertDeduplicationTokenTransform>("Right before Inner query", !insert_settings.insert_deduplication_token.value.empty(), out.getInputHeader()));
     }
 
     return out;
@@ -740,6 +750,7 @@ void ExecutingInnerQueryFromViewTransform::onConsume(Chunk chunk)
 {
     auto block = getInputPort().getHeader().cloneWithColumns(chunk.getColumns());
     state.emplace(process(block, view, *views_data));
+    state->chunk_infos = chunk.getChunkInfos();
 }
 
 
@@ -760,6 +771,8 @@ ExecutingInnerQueryFromViewTransform::GenerateResult ExecutingInnerQueryFromView
     if (res.is_done)
         state.reset();
 
+    // here are we copy chunk_infos to the all chunks generated from the one consumed chunk
+    res.chunk.setChunkInfos(state->chunk_infos);
     return res;
 }
 

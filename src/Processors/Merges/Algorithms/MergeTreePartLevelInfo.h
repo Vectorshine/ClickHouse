@@ -16,8 +16,8 @@ public:
 
 inline size_t getPartLevelFromChunk(const Chunk & chunk)
 {
-    const auto & info = chunk.getChunkInfo();
-    if (const auto * part_level_info = typeid_cast<const MergeTreePartLevelInfo *>(info.get()))
+    const auto part_level_info = chunk.getChunkInfo<MergeTreePartLevelInfo>();
+    if (part_level_info)
         return part_level_info->origin_merge_tree_part_level;
     return 0;
 }

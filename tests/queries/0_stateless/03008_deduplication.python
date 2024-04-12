@@ -49,19 +49,40 @@ def instance_create_statement(table_name, table_columns, table_keys, table_engin
     return __format(template, **params)
 
 
-def instance_insert_statement(table_name, count, insert_unique_blocks, use_insert_token):
-    template = """
-        INSERT INTO {table_name}
-            SELECT {insert_columns}
-            FROM numbers({count}) {insert_settings};
-        """
-    return __format(
-        template,
-        table_name=table_name,
-        count=count,
-        insert_columns="'src_4', 4" if not insert_unique_blocks else "'src_' || toString(number), number",
-        insert_settings="" if not use_insert_token else "SETTINGS insert_deduplication_token='UDT'",
-    )
+def instance_insert_statement(table_name, count, insert_method, insert_unique_blocks, use_insert_token):
+    insert_settings = "" if not use_insert_token else "SETTINGS insert_deduplication_token='UDT'"
+
+    if insert_method == 'InsertSelect':
+        template = """
+            INSERT INTO {table_name}
+                SELECT {insert_columns}
+                FROM numbers({count}) {insert_settings};
+            """
+        return __format(
+            template,
+            table_name=table_name,
+            count=count,
+            insert_columns="'src_4', 4" if not insert_unique_blocks else "'src_' || toString(number), number",
+            insert_settings=insert_settings,
+        )
+
+    else:
+        template = """
+                    INSERT INTO {table_name}
+                        {insert_settings} VALUES {insert_values}; 
+                    """
+
+        values = []
+        for i in range(count):
+            values += [f"('src_{i}', {i})"] if insert_unique_blocks else ["('src_4', 4)"]
+        insert_values = ", ".join(values)
+
+        return __format(
+            template,
+            table_name=table_name,
+            insert_settings=insert_settings,
+            insert_values=insert_values,
+        )
 
 
 def get_drop_tables_statements(tables):
@@ -109,6 +130,10 @@ class ArgsFactory:
     def add_opt_uniq_blocks(self):
         self.__parser.add_argument("--insert-unique-blocks", type=str2bool, nargs='?', const=True, default=True)
 
+    def add_opt_insert_method(self):
+        self.__parser.add_argument(
+            "--insert-method",  choices=["InsertSelect", "InsertValues"], default="InsertSelect")
+
     def add_all(self):
         self.add_opt_engine()
         self.add_opt_user_token()
@@ -116,6 +141,7 @@ class ArgsFactory:
         self.add_opt_dedup_src()
         self.add_opt_dedup_dst()
         self.add_opt_get_logs()
+        self.add_opt_insert_method()
         self.add_opt_uniq_blocks()
 
 
@@ -151,7 +177,7 @@ def test_insert_several_blocks(parser):
         drop_tables_statements = get_drop_tables_statements( ["table_a_b", "table_when_b_even", "mv_b_even"] )
 
         insert_statement = instance_insert_statement(
-            "table_a_b", 10, args.insert_unique_blocks, args.use_insert_token
+            "table_a_b", 10, args.insert_method, args.insert_unique_blocks, args.use_insert_token
         )
 
         print_details_statements = f"""
@@ -279,7 +305,7 @@ def test_mv_generates_several_blocks(parser):
         )
 
         insert_statement = instance_insert_statement(
-            "table_a_b", 5, args.insert_unique_blocks, args.use_insert_token
+            "table_a_b", 5, args.insert_method, args.insert_unique_blocks, args.use_insert_token
         )
 
         details_print_statements = f"""
@@ -423,7 +449,7 @@ def test_several_mv_into_one_table(parser):
         )
 
         insert_statement = instance_insert_statement(
-            "table_src", 8, args.insert_unique_blocks, args.use_insert_token
+            "table_src", 8, args.insert_method, args.insert_unique_blocks, args.use_insert_token
         )
 
         details_print_statements = f"""

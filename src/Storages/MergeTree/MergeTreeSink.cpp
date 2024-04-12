@@ -1,8 +1,11 @@
 #include <Storages/MergeTree/MergeTreeSink.h>
 #include <Storages/StorageMergeTree.h>
+#include <Processors/Transforms/NumberBlocksTransform.h>
 #include <Interpreters/PartLog.h>
 #include <DataTypes/ObjectUtils.h>
+#include "Common/Exception.h"
 #include <Common/ProfileEventsScope.h>
+#include "Interpreters/StorageID.h"
 
 namespace ProfileEvents
 {
@@ -110,13 +113,16 @@ void MergeTreeSink::consume(Chunk chunk)
         String block_dedup_token;
         if (storage.getDeduplicationLog())
         {
-            const String & dedup_token = settings.insert_deduplication_token;
-            if (!dedup_token.empty())
+            auto token_info = chunk.getChunkInfo<DedupTokenInfo>();
+            if (!token_info && !context->getSettingsRef().insert_deduplication_token.value.empty())
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "DedupTokenInfo is expected for chunk table: {}",
+                storage.getStorageID().getNameForLogs());
+
+            if (token_info)
             {
                 /// multiple blocks can be inserted within the same insert query
                 /// an ordinal number is added to dedup token to generate a distinctive block id for each block
-                block_dedup_token = fmt::format("{}_{}", dedup_token, chunk_dedup_seqnum);
-                ++chunk_dedup_seqnum;
+                block_dedup_token = token_info->getToken();
             }
         }
 
@@ -151,6 +157,7 @@ void MergeTreeSink::consume(Chunk chunk)
             partitions = DelayedPartitions{};
         }
 
+        /// TODO block_dedup_token
         partitions.emplace_back(MergeTreeSink::DelayedChunk::Partition
         {
             .temp_part = std::move(temp_part),

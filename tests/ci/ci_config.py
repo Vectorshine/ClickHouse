@@ -188,6 +188,11 @@ class StatusNames(metaclass=WithIter):
     SYNC = "A Sync"
 
 
+JOBS_REQUIRED_FOR_SYNC = [
+    JobNames.BUILD_CHECK,
+]
+
+
 # dynamically update JobName with Build jobs
 for attr_name in dir(Build):
     if not attr_name.startswith("__") and not callable(getattr(Build, attr_name)):

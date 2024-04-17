@@ -497,3 +497,41 @@ def trigger_mergeable_check(commit: Commit, statuses: CommitStatuses) -> None:
 
     if mergeable_status is None or mergeable_status.description != description:
         set_mergeable_check(commit, description, state)
+
+
+def trigger_a_sync_check(commit: Commit, statuses: CommitStatuses) -> None:
+    """calculate and update StatusNames.SYNC"""
+    # Issues:
+    # - should be two commits. One for the remote, and second for the local statuses
+    required_checks = [
+        status for status in statuses if status.context in JOBS_REQUIRED_FOR_SYNC
+    ]
+
+    mergeable_status = None
+    for status in statuses:
+        if status.context == StatusNames.SYNC:
+            mergeable_status = status
+            break
+
+    success = []
+    fail = []
+    for status in required_checks:
+        if status.state == SUCCESS:
+            success.append(status.context)
+        else:
+            fail.append(status.context)
+
+    state: StatusType = SUCCESS
+
+    if success:
+        description = ", ".join(success)
+    else:
+        description = "awaiting job statuses"
+
+    if fail:
+        description = "failed: " + ", ".join(fail)
+        state = FAILURE
+    description = format_description(description)
+
+    if mergeable_status is None or mergeable_status.description != description:
+        set_mergeable_check(commit, description, state)
